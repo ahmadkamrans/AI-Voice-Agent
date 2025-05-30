@@ -83,27 +83,31 @@ node test-client.js
       Receives the transcribed text
     </li>
 
-    <li><strong>Context Retrieval (RAG with Supabase)</strong><br />
-      Embeds the transcribed query using OpenAI Embeddings<br />
-      Calls the <code>match_documents</code> Supabase RPC to fetch related historical Q&A<br />
-      Prepares a context string for GPT-4
-    </li>
+    ### 🧠 Server (`server.js`)
 
-    <li><strong>Response Generation (OpenAI GPT-4)</strong><br />
-      Sends context + user query to OpenAI GPT-4<br />
-      Receives a smart, natural language reply
-    </li>
+        1. **Transcription**  
+        - Receives the full audio buffer from the client  
+        - Sends it to ElevenLabs STT API  
+        - Receives the transcribed text  
 
-    <li><strong>Memory Logging (Supabase)</strong><br />
-      Stores the Q&A pair in the <code>documents</code> table<br />
-      This improves future context relevance via vector similarity
-    </li>
+        2. **Context Retrieval (RAG with Supabase)**  
+        - Embeds the transcribed query using OpenAI Embeddings  
+        - Calls the `match_documents` Supabase RPC to fetch related historical Q&A  
+        - Prepares a context string for GPT-4  
 
-    <li><strong>Voice Response (ElevenLabs TTS)</strong><br />
-      Sends the GPT-4 response text to ElevenLabs TTS<br />
-      Receives an MP3 file<br />
-      Sends the MP3 back to the client
-    </li>
+        3. **Response Generation (OpenAI GPT-4)**  
+        - Sends context + user query to OpenAI GPT-4  
+        - Receives a smart, natural language reply  
+
+        4. **Memory Logging (Supabase)**  
+        - Stores the Q&A pair in the `documents` table  
+        - This improves future context relevance via vector similarity  
+
+        5. **Voice Response (ElevenLabs TTS)**  
+        - Sends the GPT-4 response text to ElevenLabs TTS  
+        - Receives an MP3 file  
+        - Sends the MP3 back to the client  
+
   </ol>
 
   <hr />
