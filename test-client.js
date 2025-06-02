@@ -67,7 +67,7 @@ function startRecording() {
   ffmpeg.stdout.on('data', (chunk) => {
     ws.send(chunk);
   });
-
+  //hello
   ffmpeg.stderr.on('data', () => { /* silence logs */ });
 
   ffmpeg.on('error', (err) => {
