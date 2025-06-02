@@ -114,7 +114,7 @@ wss.on('connection', (ws) => {
             { role: 'user', content: transcription }
           ];
           const chatRes = await openai.chat.completions.create({
-            model: 'gpt-4',
+            model: 'gpt-3.5-turbo',
             messages: messages
           });
           aiResponse = chatRes.choices[0].message.content.trim();
