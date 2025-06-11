@@ -1,6 +1,3 @@
-import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-
 import os, tempfile, io, time
 from flask import Flask, request, send_file
 from twilio.twiml.voice_response import VoiceResponse
@@ -8,7 +5,8 @@ import requests
 import soundfile as sf
 import whisper
 import openai
-
+            
+import librosa
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -24,16 +22,23 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "default_voice_id")
 whisper_model = whisper.load_model("tiny.en")
 conversation_state = {}
 
-def whisper_stt(audio_data, fs=16000):
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        sf.write(tmp.name, audio_data, fs)
-        result = whisper_model.transcribe(tmp.name)
-        os.unlink(tmp.name)
-    text = result["text"].strip()
-    print(f"[STT] Transcription result: {text}")
-    return text
+def whisper_stt(audio_bytes):
+    try:
+        audio_np, sr = sf.read(io.BytesIO(audio_bytes))
+        if len(audio_np.shape) > 1:
+            audio_np = audio_np.mean(axis=1) # whisper expects mono audio
+        audio_np = audio_np.astype("float32")  # Cast to float32
+        result = whisper_model.transcribe(audio_np) # running on local server so it takes times on CPU, alternative is to use GPU
+        text = result["text"].strip()
+        print(f"[STT] Transcription result: {text}")
+        return text
+    except Exception as e:
+        print(f"[STT] Error in transcription: {e}")
+        return ""
 
-def fetch_twilio_recording_with_retry(url, retries=5, delay=2):
+
+
+def fetch_twilio_recording_with_retry(url, retries=5, delay=1):
     for attempt in range(retries):
         try:
             audio_resp = requests.get(url, auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN))
@@ -54,42 +59,41 @@ def voice():
     # UPDATED: Initialize conversation with system message for concise answers
     conversation_state[call_sid] = {
         "messages": [
-            {"role": "system", "content": "You are an AI assistant. Answer questions concisely in 15 to 20 words."}
+            {"role": "system", "content": "You are an AI assistant. Answer questions concisely in 15 to 20 words keep the response short and accurate."}
         ]
     }
     
     resp = VoiceResponse()
-    resp.say("Hello, I am your AI assistant. You can ask me any question. Please speak after the beep.", voice="alice")
+    resp.say("Hello, I am your AI assistant. Please speak after the beep.", voice="alice")
     resp.record(
         action=request.url_root + "process_recording", method="POST",
-        maxLength=30, timeout=5, playBeep=True, trim="trim-silence",
+        maxLength=60, timeout=3, playBeep=True, trim="trim-silence",
         recordingStatusCallback=request.url_root + "recording_status", recordingStatusCallbackMethod="POST"
     )
     return str(resp)
 
 @app.route("/process_recording", methods=["GET", "POST"])
 def process_recording():
+    print(f"[Record] Processing recording...", request.values)
+
     call_sid = request.values.get("CallSid", "unknown")
     recording_url = request.values.get("RecordingUrl")
-    recording_sid = request.values.get("RecordingSid")
     recording_duration = request.values.get("RecordingDuration", "0")
-    
-    if recording_sid and (not recording_url or recording_url.endswith(".xml")):
-        recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Recordings/{recording_sid}.wav"
 
     print(f"[Record] Received recording for call {call_sid}. Duration: {recording_duration} sec. URL: {recording_url}")
     
-    if not recording_url or recording_duration == "0":
-        print(f"[Record] No audio captured (silence or error). Ending call.")
-        resp = VoiceResponse()
-        resp.say("I didn't catch that. Goodbye.")
-        resp.hangup()
-        cleanup_call_resources(call_sid)
-        return str(resp)
+    # if not recording_url or recording_duration == "0":
+    #     print(f"[Record] No audio captured (silence or error). Ending call.")
+    #     resp = VoiceResponse()
+    #     resp.say("I didn't catch that. Goodbye.")
+    #     resp.hangup()
+    #     cleanup_call_resources(call_sid)
+    #     return str(resp)
     
     try:
         audio_resp = fetch_twilio_recording_with_retry(recording_url)
         print(f"[Record] Content-Type from Twilio: {audio_resp.headers.get('Content-Type')}")
+        audio_bytes = audio_resp.content
     except Exception as e:
         print(f"[Error] Could not fetch recording from Twilio: {e}")
         resp = VoiceResponse()
@@ -98,29 +102,7 @@ def process_recording():
         cleanup_call_resources(call_sid)
         return str(resp)
 
-    audio_bytes = audio_resp.content
-    try:
-        audio_data, sample_rate = sf.read(io.BytesIO(audio_bytes))
-    except Exception as e:
-        print(f"[Error] Failed to read audio data: {e}")
-        resp = VoiceResponse()
-        resp.say("Sorry, I cannot process the audio. Goodbye.")
-        resp.hangup()
-        cleanup_call_resources(call_sid)
-        return str(resp)
-
-    if len(audio_data.shape) > 1 and audio_data.shape[1] > 1:
-        audio_data = audio_data.mean(axis=1)
-
-    if sample_rate != 16000:
-        try:
-            import librosa
-            audio_data = librosa.resample(audio_data, orig_sr=sample_rate, target_sr=16000)
-            sample_rate = 16000
-        except ImportError:
-            pass
-
-    user_text = whisper_stt(audio_data, fs=sample_rate)
+    user_text = whisper_stt(audio_bytes)
     if user_text == "":
         print("[STT] Transcription empty (user was silent). Hanging up.")
         resp = VoiceResponse()
@@ -208,7 +190,8 @@ def recording_status():
     if rec_event == "absent" or digits == "hangup":
         print(f"[RecordCallback] No recording captured. Cleaning up.")
         cleanup_call_resources(call_sid)
-    return ("", 204)
+        return ("", 204)
+    return ("", 200)
 
 @app.route("/audio/<path:filename>", methods=["GET"])
 def serve_audio(filename):
