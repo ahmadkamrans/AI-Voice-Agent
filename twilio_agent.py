@@ -20,7 +20,8 @@ openai.api_key = os.environ.get("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "default_voice_id")
 
-whisper_model = whisper.load_model("tiny")
+# UPDATED: Use faster Whisper model (tiny.en for English)
+whisper_model = whisper.load_model("tiny.en")
 conversation_state = {}
 
 def whisper_stt(audio_data, fs=16000):
@@ -50,7 +51,12 @@ def voice():
     call_sid = request.values.get("CallSid", "unknown")
     from_num = request.values.get("From", "")
     print(f"[Call] Incoming call {call_sid} from {from_num}")
-    conversation_state[call_sid] = {"last_response_id": None}
+    # UPDATED: Initialize conversation with system message for concise answers
+    conversation_state[call_sid] = {
+        "messages": [
+            {"role": "system", "content": "You are an AI assistant. Answer questions concisely in 15 to 20 words."}
+        ]
+    }
     
     resp = VoiceResponse()
     resp.say("Hello, I am your AI assistant. You can ask me any question. Please speak after the beep.", voice="alice")
@@ -129,13 +135,13 @@ def process_recording():
         prev_resp_id = conversation_state.get(call_sid, {}).get("last_response_id")
         if prev_resp_id:
             ai_response = openai.responses.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 input=user_text,
                 previous_response_id=prev_resp_id
             )
         else:
             ai_response = openai.responses.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 input=user_text
             )
     except Exception as e:
@@ -177,10 +183,12 @@ def process_recording():
     print(f"[TTS] Audio generated and saved to {audio_filename} ({len(tts_res.content)} bytes)")
 
     resp = VoiceResponse()
+    # UPDATED: Prompt user to wait before playing the answer
+    resp.say("Just a moment, I'm processing your request.", voice="alice")
     audio_url = request.url_root + f"audio/{audio_filename}"
     resp.play(audio_url)
     resp.pause(length=1)
-    resp.say("You can ask another question after the beep.", voice="alice")
+    # UPDATED: After playing the answer, just beep (playBeep) and start recording next question
     resp.record(
         action=request.url_root + "process_recording", method="POST",
         maxLength=30, timeout=5, playBeep=True, trim="trim-silence",
@@ -217,6 +225,7 @@ def cleanup_call_resources(call_sid):
             print(f"[Cleanup] Removed audio file {audio_file}")
     except Exception as e:
         print(f"[Cleanup] Error removing {audio_file}: {e}")
+    # UPDATED: Remove conversation state for this call
     conversation_state.pop(call_sid, None)
 
 if __name__ == "__main__":
